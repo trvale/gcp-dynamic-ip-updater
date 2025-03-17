@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gcp-dynamic-ip-updater
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gcp-dynamic-ip-updater
+  template:
+    metadata:
+      labels:
+        app: gcp-dynamic-ip-updater
+    spec:
+      containers:
+      - name: gcp-dynamic-ip-updater
+        image: gcp-dynamic-ip-updater:latest
+        volumeMounts:
+        - name: gcp-credentials
+          mountPath: /secrets/gcp-credentials.json
+          subPath: gcp-credentials.json
+      volumes:
+      - name: gcp-credentials
+        secret:
+          secretName: gcp-credentials-secret
