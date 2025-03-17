@@ -15,6 +15,7 @@ spec:
       containers:
       - name: gcp-dynamic-ip-updater
         image: gcp-dynamic-ip-updater:latest
+        imagePullPolicy: Never
         volumeMounts:
         - name: gcp-credentials
           mountPath: /secrets/gcp-credentials.json
