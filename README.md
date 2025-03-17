@@ -41,7 +41,7 @@ GCP Dynamic IP Updater is a tool designed to automatically update the IP address
 2. Move or copy login credentials to secrets folder:
     ```sh
     mkdir -p ./secrets
-    cp /Users/jtravaille/.config/gcloud/application_default_credentials.json ./secrets/gcp-credentials.json
+    cp /Users/${HOME}/.config/gcloud/application_default_credentials.json ./secrets/gcp-credentials.json
     ```
 
 ## Usage
