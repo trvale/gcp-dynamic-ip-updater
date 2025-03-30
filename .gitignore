@@ -1,3 +1,6 @@
 ip_addresses.json
 secrets/
 *.tar
+debug/
+target/
+**/*.rs.bk
