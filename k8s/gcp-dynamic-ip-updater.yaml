@@ -21,14 +21,14 @@ spec:
         - name: gcp-credentials
           mountPath: /secrets/gcp-credentials.json
           subPath: gcp-credentials.json
+        resources:
+          requests:
+            memory: "96Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
       volumes:
       - name: gcp-credentials
         secret:
           secretName: gcp-credentials-secret
-      resources:
-        requests:
-          memory: "96Mi"
-          cpu: "100m"
-        limits:
-          memory: "128Mi"
-          cpu: "500m"
