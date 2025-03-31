@@ -1,11 +1,9 @@
-use std::fs;
-use std::io::{self, Write};
-use std::process::Command;
+use std::io::{self};
 use std::thread::sleep;
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use reqwest::blocking::get;
-use log::{info, error};
+use log::{info, error, debug};
 use structopt::StructOpt;
 use regex::Regex;
 
@@ -23,11 +21,23 @@ struct IpAddresses {
 }
 
 fn get_public_ip() -> Option<String> {
+    debug!("Attempting to fetch public IP address...");
     match get("https://api.ipify.org?format=json") {
         Ok(response) => {
+            debug!("Received response from IP API: {:?}", response);
             if response.status().is_success() {
                 match response.json::<serde_json::Value>() {
-                    Ok(json) => json["ip"].as_str().map(|s| s.to_string()),
+                    Ok(json) => {
+                        debug!("Parsed JSON response: {:?}", json);
+                        if let Some(ip) = json["ip"].as_str() {
+                            let ip_string = ip.to_string();
+                            info!("Retrieved public IP address: {}", ip_string);
+                            Some(ip_string)
+                        } else {
+                            error!("IP address not found in response");
+                            None
+                        }
+                    }
                     Err(e) => {
                         error!("Failed to parse IP address: {}", e);
                         None
@@ -45,35 +55,31 @@ fn get_public_ip() -> Option<String> {
     }
 }
 
-fn check_ip_changed(ip: &str) -> bool {
-    let file_path = "./ip_addresses.json";
-    let mut data = if let Ok(contents) = fs::read_to_string(file_path) {
-        serde_json::from_str(&contents).unwrap_or(IpAddresses {
-            previous_ip: None,
-            current_ip: None,
-        })
-    } else {
-        IpAddresses {
-            previous_ip: None,
-            current_ip: None,
-        }
-    };
-
-    if data.current_ip.as_deref() != Some(ip) {
-        info!("IP address has changed: previous_ip={:?}, current_ip={}", data.current_ip, ip);
-        data.previous_ip = data.current_ip.clone();
-        data.current_ip = Some(ip.to_string());
-
-        if let Ok(json) = serde_json::to_string_pretty(&data) {
-            let _ = fs::write(file_path, json);
-        }
+fn check_ip_changed(ip: &str, ip_data: &mut IpAddresses) -> bool {
+    debug!(
+        "Checking if IP address has changed. Current IP: {:?}, New IP: {}",
+        ip_data.current_ip, ip
+    );
+    if ip_data.current_ip.as_deref() != Some(ip) {
+        info!(
+            "IP address has changed: previous_ip={:?}, current_ip={}",
+            ip_data.current_ip, ip
+        );
+        ip_data.previous_ip = ip_data.current_ip.clone();
+        ip_data.current_ip = Some(ip.to_string());
         true
     } else {
+        debug!("IP address has not changed.");
         false
     }
 }
 
-fn update_firewall_rule(firewall_rule_name: &str, new_ip: &str) -> io::Result<()> {
+async fn update_firewall_rule(firewall_rule_name: &str, new_ip: &str) -> io::Result<()> {
+    debug!(
+        "Updating firewall rule: firewall_rule_name={}, new_ip={}",
+        firewall_rule_name, new_ip
+    );
+
     // Validate firewall_rule_name
     let valid_name = Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
     if !valid_name.is_match(firewall_rule_name) {
@@ -88,16 +94,30 @@ fn update_firewall_rule(firewall_rule_name: &str, new_ip: &str) -> io::Result<()
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid IP address"));
     }
 
-    let output = Command::new("gcloud")
-        .args(&[
-            "compute",
-            "firewalls",
-            "update",
-            firewall_rule_name,
-            "--source-ranges",
-            &format!("{}/32", new_ip),
-        ])
-        .output()?;
+    debug!("Executing gcloud command to update firewall rule...");
+    let client = google_cloud::Client::default();
+    let firewall = client
+        .compute()
+        .firewalls()
+        .get(firewall_rule_name)
+        .await
+        .map_err(|e| {
+            error!("Failed to retrieve firewall rule: {}", e);
+            io::Error::new(io::ErrorKind::Other, "Failed to retrieve firewall rule")
+        })?;
+
+    let mut firewall = firewall.clone();
+    firewall.source_ranges = Some(vec![format!("{}/32", new_ip)]);
+
+    client
+        .compute()
+        .firewalls()
+        .update(firewall_rule_name, &firewall)
+        .await
+        .map_err(|e| {
+            error!("Failed to update firewall rule: {}", e);
+            io::Error::new(io::ErrorKind::Other, "Failed to update firewall rule")
+        })?;
 
     if output.status.success() {
         info!("Firewall rule updated: firewall_rule_name={}, ip={}", firewall_rule_name, new_ip);
@@ -111,21 +131,32 @@ fn update_firewall_rule(firewall_rule_name: &str, new_ip: &str) -> io::Result<()
 }
 
 fn main() {
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let opt = Opt::from_args();
 
-    info!("Starting dynamic IP updater: firewall_rule_names={:?}", opt.firewall_rule_names);
+    info!(
+        "Starting dynamic IP updater: firewall_rule_names={:?}",
+        opt.firewall_rule_names
+    );
 
-    loop {
+    debug!("Initializing in-memory IP address tracker...");
+    let mut ip_data = IpAddresses {
+        previous_ip: None,
+        current_ip: None,
+    };
+
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        debug!("Starting new iteration of the update loop...");
         if let Some(ip) = get_public_ip() {
-            if check_ip_changed(&ip) {
+            if check_ip_changed(&ip, &mut ip_data) {
                 for firewall_rule_name in &opt.firewall_rule_names {
-                    if let Err(e) = update_firewall_rule(firewall_rule_name, &ip) {
+                    if let Err(e) = update_firewall_rule(firewall_rule_name, &ip).await {
                         error!("Error updating firewall rule: {}", e);
                     }
                 }
             }
         }
+        debug!("Sleeping for 3 minutes...");
         sleep(Duration::from_secs(180)); // Sleep for 3 minutes
-    }
+    });
 }
