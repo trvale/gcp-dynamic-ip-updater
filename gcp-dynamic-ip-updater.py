@@ -32,22 +32,13 @@ def get_public_ip():
         log.error("Failed to fetch public IP address", error=str(e))
         return None
 
+previous_ip = None
+
 def check_ip_changed(ip):
-    file_path = './ip_addresses.json'
-    
-    if os.path.exists(file_path):
-        with open(file_path, 'r') as file:
-            data = json.load(file)
-    else:
-        data = {"previous_ip": None, "current_ip": None}
-    
-    if data["current_ip"] != ip:
-        log.info("IP addres has changed", previous_ip=data["current_ip"], current_ip=ip)
-        data["previous_ip"] = data["current_ip"]
-        data["current_ip"] = ip
-        
-        with open(file_path, 'w') as file:
-            json.dump(data, file, indent=4)
+    global previous_ip
+    if previous_ip != ip:
+        log.info("IP address has changed", previous_ip=previous_ip, current_ip=ip)
+        previous_ip = ip
         return True
     else:
         return False
