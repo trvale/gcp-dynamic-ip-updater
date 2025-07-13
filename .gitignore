@@ -4,3 +4,4 @@ secrets/
 debug/
 target/
 **/*.rs.bk
+.DS_Store
